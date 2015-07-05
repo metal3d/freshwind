@@ -17,12 +17,14 @@ import (
 )
 
 var (
-	ROOT           = "."
-	ADDR           = ":8000"
-	FILTER         = `^\.`
-	TIME     int64 = 1000
-	_FILTERS       = make([]*regexp.Regexp, 0)
-	CONNS          = make(map[*websocket.Conn]bool)
+	VERSION          = "master"
+	ROOT             = "."
+	ADDR             = ":8000"
+	FILTER           = `^\.`
+	TIME       int64 = 1000
+	_FILTERS         = make([]*regexp.Regexp, 0)
+	CONNS            = make(map[*websocket.Conn]bool)
+	LIVERELOAD       = "__live__reload__script_"
 )
 
 const JS = `(function(){
@@ -70,7 +72,7 @@ const JS = `(function(){
 type JSReloadHandler struct{ kwiscale.RequestHandler }
 
 func (j *JSReloadHandler) Get() {
-	jscode := fmt.Sprintf(JS, j.Request.Host+"/__live_reload")
+	jscode := fmt.Sprintf(JS, j.Request.Host+"/"+LIVERELOAD)
 	j.Response.Header().Add("Content-Type", "application/javascript")
 	j.WriteString(jscode)
 }
@@ -81,6 +83,9 @@ func (s *StaticHandler) Get() {
 	p := s.Vars["path"]
 	if p == "" {
 		p = "index.html"
+		if _, err := os.Stat(p); err != nil {
+			p = "index.htm"
+		}
 	}
 	content, err := ioutil.ReadFile(p)
 	ext := filepath.Ext(p)
@@ -91,7 +96,7 @@ func (s *StaticHandler) Get() {
 		switch ext {
 		case ".html", ".htm":
 			cs := string(content)
-			cs = strings.Replace(cs, "</body>", `<script src="__live_reload.js"></script>`+"\n</body>", 1)
+			cs = strings.Replace(cs, "</body>", `<script src="`+LIVERELOAD+`.js"></script>`+"\n</body>", 1)
 			content = []byte(cs)
 		}
 
@@ -152,11 +157,16 @@ func main() {
 
 	flag.StringVar(&ROOT, "d", ROOT, "directory to serve")
 	flag.StringVar(&ADDR, "a", ADDR, "address to serve")
-	flag.StringVar(&FILTER, "f", FILTER, "coma separated list of regexp to exclude files (warning, "+
-		"the given string with -h option appends 2 backslashes because the output is escaped, but you need "+
-		"only one backslash. Keep in mind that a point means \"any char\" with regexp so you need to escape if whit backslash to match a real point. The default string excludes filename begining by a simple point that are hidden files on *NIX operating systems)")
+	flag.StringVar(&FILTER, "f", FILTER, "coma separated list of regexp to exclude files")
 	flag.Int64Var(&TIME, "t", TIME, "Time in milisecond for file change check")
+	flag.StringVar(&LIVERELOAD, "s", LIVERELOAD, "script name that is used for websocker path and js script")
+	v := flag.Bool("version", false, "show version")
 	flag.Parse()
+
+	if *v {
+		fmt.Println(VERSION)
+		return
+	}
 
 	f := strings.Split(FILTER, ",")
 	for _, filter := range f {
@@ -171,8 +181,8 @@ func main() {
 		Port: ADDR,
 	})
 
-	app.AddRoute("/__live_reload", WSHandler{})
-	app.AddRoute("/__live_reload.js", JSReloadHandler{})
+	app.AddRoute("/"+LIVERELOAD, WSHandler{})
+	app.AddRoute("/"+LIVERELOAD+".js", JSReloadHandler{})
 	app.AddRoute("/{path:.*}", StaticHandler{})
 
 	app.ListenAndServe()
