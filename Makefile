@@ -1,7 +1,7 @@
 
 CC:=go
 VERSION:=$(shell git describe --tag | sed 's/^v//')
-OPT= -ldflags '-X main.VERSION $(VERSION)'
+OPT:=-ldflags '-X main.VERSION $(VERSION)'
 BUILD:=$(CC) build $(OPT)
 
 
