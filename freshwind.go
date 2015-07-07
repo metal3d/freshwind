@@ -20,9 +20,11 @@ var (
 	VERSION          = "master"
 	ROOT             = "."
 	ADDR             = ":8000"
-	FILTER           = `^\.`
+	FILTER           = ".*"
 	TIME       int64 = 1000
 	_FILTERS         = make([]*regexp.Regexp, 0)
+	EXCLUDE          = `^\.`
+	_EXCLUDES        = make([]*regexp.Regexp, 0)
 	CONNS            = make(map[*websocket.Conn]bool)
 	LIVERELOAD       = "__live__reload__script_"
 )
@@ -121,16 +123,29 @@ func waitAndReload() {
 
 		filepath.Walk(b, func(p string, fi os.FileInfo, err error) error {
 
+			// directories are not very interessing
+			if fi.IsDir() {
+				return nil
+			}
+
 			// filters file names to exclude
-			for _, f := range _FILTERS {
+			for _, f := range _EXCLUDES {
 				if f.MatchString(fi.Name()) {
 					return nil
 				}
 			}
+
+			// now check if filename is in the filter list
+			for _, f := range _FILTERS {
+				if !f.MatchString(fi.Name()) {
+					return nil
+				}
+			}
+
 			// check modtime to be > of last sent event
 			mt := fi.ModTime().Unix()
 			if mt > lastevt {
-				log.Println(fi.Name(), "changed")
+				log.Println(p, "changed")
 				lastevt = mt
 				shouldreload = true
 			}
@@ -157,7 +172,8 @@ func main() {
 
 	flag.StringVar(&ROOT, "d", ROOT, "directory to serve")
 	flag.StringVar(&ADDR, "a", ADDR, "address to serve")
-	flag.StringVar(&FILTER, "f", FILTER, "coma separated list of regexp to exclude files")
+	flag.StringVar(&FILTER, "f", FILTER, "coma separated list of regexp to match files")
+	flag.StringVar(&EXCLUDE, "e", EXCLUDE, "coma separated list of regexp to exclude files")
 	flag.Int64Var(&TIME, "t", TIME, "Time in milisecond for file change check")
 	flag.StringVar(&LIVERELOAD, "s", LIVERELOAD, "script name that is used for websocker path and js script")
 	v := flag.Bool("version", false, "show version")
@@ -170,9 +186,14 @@ func main() {
 
 	f := strings.Split(FILTER, ",")
 	for _, filter := range f {
-		log.Println("filters", filter)
 		r := regexp.MustCompile(filter)
 		_FILTERS = append(_FILTERS, r)
+	}
+
+	e := strings.Split(EXCLUDE, ",")
+	for _, filter := range e {
+		r := regexp.MustCompile(filter)
+		_EXCLUDES = append(_EXCLUDES, r)
 	}
 
 	go waitAndReload()
