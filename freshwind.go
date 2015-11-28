@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"gopkg.in/kwiscale/framework.v0"
+	"gopkg.in/kwiscale/framework.v1"
 )
 
 var (
@@ -22,11 +22,11 @@ var (
 	ADDR             = ":8000"
 	FILTER           = ".*"
 	TIME       int64 = 1000
-	_FILTERS         = make([]*regexp.Regexp, 0)
 	EXCLUDE          = `^\.`
-	_EXCLUDES        = make([]*regexp.Regexp, 0)
 	CONNS            = make(map[*websocket.Conn]bool)
-	LIVERELOAD       = "__live__reload__script_"
+	LIVERELOAD       = "js/__live__reload__script_"
+	excludes         = make([]*regexp.Regexp, 0)
+	filters          = make([]*regexp.Regexp, 0)
 )
 
 const JS = `(function(){
@@ -66,21 +66,23 @@ const JS = `(function(){
 			setTimeout(connect, 1000);
 		}
 	}
-
 	connect();
-
 })();`
 
+// JSReloadHandler serve the livereload script.
 type JSReloadHandler struct{ kwiscale.RequestHandler }
 
+// Get respond to the javascript request.
 func (j *JSReloadHandler) Get() {
-	jscode := fmt.Sprintf(JS, j.Request.Host+"/"+LIVERELOAD)
-	j.Response.Header().Add("Content-Type", "application/javascript")
+	jscode := fmt.Sprintf(JS, j.Request().Host+"/"+LIVERELOAD)
+	j.Response().Header().Add("Content-Type", "application/javascript")
 	j.WriteString(jscode)
 }
 
+// StaticHandler serves files.
 type StaticHandler struct{ kwiscale.RequestHandler }
 
+// Get serve files and inject livereload javascript if needed.
 func (s *StaticHandler) Get() {
 	p := s.Vars["path"]
 	if p == "" {
@@ -98,23 +100,32 @@ func (s *StaticHandler) Get() {
 		switch ext {
 		case ".html", ".htm":
 			cs := string(content)
-			cs = strings.Replace(cs, "</body>", `<script src="`+LIVERELOAD+`.js"></script>`+"\n</body>", 1)
+			cs = strings.Replace(cs, "</body>", `<script src="/`+LIVERELOAD+`.js"></script>`+"\n</body>", 1)
 			content = []byte(cs)
 		}
 
-		s.Response.Header().Add("Content-Type", mime.TypeByExtension(ext))
+		s.Response().Header().Add("Content-Type", mime.TypeByExtension(ext))
 
 		s.Write(content)
 	}
 }
 
+// WSHandler respond to the websocket that is injected in
+// html files.
 type WSHandler struct{ kwiscale.WebSocketHandler }
 
+// Serve keep connections while some browser
+// are connected.
 func (w *WSHandler) Serve() {
-	c := w.GetConnection()
-	CONNS[c] = true
+	for {
+		c := w.GetConnection()
+		CONNS[c] = true
+		c.ReadMessage()
+	}
 }
 
+// waitAndReload listens for file changes and launches
+// a message in websocket as soon as a file is changed.
 func waitAndReload() {
 	b, _ := filepath.Abs(ROOT)
 	lastevt := time.Now().Unix()
@@ -129,14 +140,14 @@ func waitAndReload() {
 			}
 
 			// filters file names to exclude
-			for _, f := range _EXCLUDES {
+			for _, f := range excludes {
 				if f.MatchString(fi.Name()) {
 					return nil
 				}
 			}
 
 			// now check if filename is in the filter list
-			for _, f := range _FILTERS {
+			for _, f := range filters {
 				if !f.MatchString(fi.Name()) {
 					return nil
 				}
@@ -187,24 +198,25 @@ func main() {
 	f := strings.Split(FILTER, ",")
 	for _, filter := range f {
 		r := regexp.MustCompile(filter)
-		_FILTERS = append(_FILTERS, r)
+		filters = append(filters, r)
 	}
 
 	e := strings.Split(EXCLUDE, ",")
 	for _, filter := range e {
 		r := regexp.MustCompile(filter)
-		_EXCLUDES = append(_EXCLUDES, r)
+		excludes = append(excludes, r)
 	}
 
 	go waitAndReload()
 
 	app := kwiscale.NewApp(&kwiscale.Config{
-		Port: ADDR,
+		Port:           ADDR,
+		NbHandlerCache: 5,
 	})
 
-	app.AddRoute("/"+LIVERELOAD, WSHandler{})
-	app.AddRoute("/"+LIVERELOAD+".js", JSReloadHandler{})
-	app.AddRoute("/{path:.*}", StaticHandler{})
+	app.AddRoute("/"+LIVERELOAD+".js", &JSReloadHandler{})
+	app.AddRoute("/"+LIVERELOAD, &WSHandler{})
+	app.AddRoute("/{path:.*}", &StaticHandler{})
 
 	app.ListenAndServe()
 }
